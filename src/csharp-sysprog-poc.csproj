@@ -1,0 +1,110 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+    <DefineConstants>X64;$(DefineConstants)</DefineConstants>
+    
+    <!-- csc (C# compiler) options -->
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+
+    <!-- ilc (IL compiler) options -->
+    <IlcSystemModule>csharp-sysprog-poc</IlcSystemModule>
+    <IlcDisableReflection>true</IlcDisableReflection>
+    <OptimizationPreference>Size</OptimizationPreference>
+
+    <!-- linker options -->
+    <EntryPointSymbol>ep</EntryPointSymbol>
+    <LinkerSubsystem>EFI_APPLICATION</LinkerSubsystem>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="8.0.2" />
+  </ItemGroup>
+
+  <!-- We want to override a few MSBuild targets provided by the SDK, so we need to include the SDK props/targets manually. -->
+  <!-- See also: https://stackoverflow.com/a/47619786/8656352 -->
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+
+  <!-- Remove all assembly references added by the SDK. -->
+  <Target Name="RemoveSdkReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" />
+      <ReferencePath Remove="@(ReferencePath)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Customize the parameters passed to ilc by overriding the target which generates them. -->
+  <!-- See also: Microsoft.NETCore.Native.targets located in the Microsoft.DotNet.ILCompiler package. -->
+  <Target Name="WriteIlcRspFileForCompilation" Outputs="%(ManagedBinary.IlcRspFile)" DependsOnTargets="$(IlcCompileDependsOn)">
+    <ItemGroup>
+      <IlcArg Include="@(IlcCompileInput)" />
+      <IlcArg Include="-o:$(NativeIntermediateOutputPath)%(ManagedBinary.Filename)$(IlcOutputFileExt)" />
+      <IlcArg Condition="$(IlcGenerateMapFile) == 'true'" Include="--map:$(NativeIntermediateOutputPath)%(ManagedBinary.Filename).map" />
+      <IlcArg Condition="$(_targetOS) != ''" Include="--targetos:$(_targetOS)" />
+      <IlcArg Condition="$(_targetArchitecture) != ''" Include="--targetarch:$(_targetArchitecture)" />
+      <IlcArg Condition="$(Optimize) == 'true'" Include="-O" />
+      <IlcArg Condition="$(Optimize) == 'true' and $(OptimizationPreference) == 'Size'" Include="--Os" />
+      <IlcArg Condition="$(Optimize) == 'true' and $(OptimizationPreference) == 'Speed'" Include="--Ot" />
+      <IlcArg Condition="$(NativeDebugSymbols) == 'true'" Include="-g" />
+      <IlcArg Condition="$(IlcGenerateCompleteTypeMetadata) == 'true' and $(IlcDisableReflection) != 'true'" Include="--completetypemetadata" />
+      <IlcArg Condition="$(IlcScanReflection) != 'false' and $(IlcDisableReflection) != 'true'" Include="--scanreflection" />
+      <IlcArg Condition="$(IlcDisableReflection) == 'true'" Include="--reflectiondata:none" />
+      <IlcArg Condition="$(IlcDisableReflection) == 'true'" Include="--feature:System.Collections.Generic.DefaultComparers=false" />
+      <IlcArg Condition="$(IlcDisableReflection) == 'true'" Include="--feature:System.Reflection.IsReflectionExecutionAvailable=false" />
+      <IlcArg Condition="$(IlcSystemModule) != ''" Include="--systemmodule:$(IlcSystemModule)" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(NativeIntermediateOutputPath)" />
+    <WriteLinesToFile File="%(ManagedBinary.IlcRspFile)" Lines="@(IlcArg)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- Customize the parameters passed to the linker by overriding the target which generates them. -->
+  <!-- (This is done only for Windows and MSVC linker currently. Support for other platforms/linkers could be added similarly.) -->
+  <!-- See also: Microsoft.NETCore.Native.{Platform}.targets located in the Microsoft.DotNet.ILCompiler package. -->
+  <Target Name="CustomizeLinkerParams" AfterTargets="SetupOSSpecificProps" BeforeTargets="LinkNative;CreateLib" Condition="'$(_targetOS)' == 'win'">
+    <PropertyGroup>
+      <ExportsFile></ExportsFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <AdditionalNativeLibraryDirectories Remove="@(AdditionalNativeLibraryDirectories)" />
+
+      <LinkerArg Remove="@(LinkerArg)" />
+      <LinkerArg Condition="$(NativeDebugSymbols) == 'true'" Include="/DEBUG" />
+      <LinkerArg Include="/INCREMENTAL:NO" />
+      <LinkerArg Condition="'$(LinkerSubsystem)' != ''" Include="/SUBSYSTEM:$(LinkerSubsystem)" />
+      <LinkerArg Condition="'$(OutputType)' == 'WinExe' or '$(OutputType)' == 'Exe'" Include="/ENTRY:$(EntryPointSymbol) /NOEXP /NOIMPLIB" />
+      <LinkerArg Include="/DYNAMICBASE:NO /BASE:0x100000 /FIXED /TSAWARE:NO /HIGHENTROPYVA:NO /NXCOMPAT:NO" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+      <LinkerArg Include="/OPT:REF" />
+      <LinkerArg Include="/OPT:ICF" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="BuildQemuDiskImage"
+        AfterTargets="CopyNativeBinary"
+        Inputs="$(PublishDir)$(TargetName).exe"
+        Outputs="$(MSBuildThisFileDirectory)..\bin\disk.img">
+    <PropertyGroup>
+      <BuildOutputPath>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\bin\'))</BuildOutputPath>
+      <QemuDiskImagePath>$(BuildOutputPath)disk.img</QemuDiskImagePath>
+    </PropertyGroup>
+
+    <Exec Condition="'$(_targetOS)' == 'win'" Command="copy /b /y &quot;$(BuildOutputPath)boot_pe.bin&quot;&#x2b;&quot;$(PublishDir)$(TargetName).exe&quot; &quot;$(QemuDiskImagePath)&quot;" />
+    <Exec Condition="'$(_targetOS)' != 'win'" Command="cat &quot;$(BuildOutputPath)boot_pe.bin&quot; &quot;$(PublishDir)$(TargetName).exe&quot; > &quot;$(QemuDiskImagePath)&quot;" />
+    <Message Text="Created QEMU disk image at $(QemuDiskImagePath)." Importance="High" />
+  </Target>
+</Project>
