@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 /// <summary>
 /// A thin wrapper around the VGA display buffer.
@@ -13,32 +14,32 @@ public static class VgaBuffer
     private const int Width = 80;
     private const int Height = 25;
 
-    private static unsafe ref ushort GetCharAt(int top, int left)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe Span<T> AsSpan<T>() where T : unmanaged
     {
-        if ((uint)top >= Height || (uint)left >= Width)
+        if (sizeof(T) == 2)
+        {
+            return MemoryMarshal.CreateSpan(ref Unsafe.AsRef<T>((void*)BaseAddress), Width * Height);
+        }
+        else if (sizeof(T) <= Width * Height * 2)
+        {
+            return MemoryMarshal.CreateSpan(ref Unsafe.AsRef<T>((void*)BaseAddress), Width * Height * 2 / sizeof(T));
+        }
+        else
         {
             Environment.FailFast(null!);
+            return default;
         }
-
-        return ref Unsafe.Add(ref Unsafe.AsRef<ushort>((void*)BaseAddress), top * Width + left);
     }
 
     public static char Read(int top, int left)
     {
-        return (char)(byte)GetCharAt(top, left);
+        return (char)(byte)AsSpan<ushort>()[top * Width + left];
     }
 
     public static void Write(int top, int left, char ch)
     {
-        GetCharAt(top, left) = (ushort)((ch <= 0xFF ? ch : '?') | (0x7 << 8));
-    }
 
-    public static void Write(int top, int left, char ch1, char ch2, char ch3, char ch4)
-    {
-        Unsafe.As<ushort, ulong>(ref GetCharAt(top, left)) = 0x0700070007000700ul
-            | (ulong)ch4 << 48
-            | (ulong)ch3 << 32
-            | (ulong)ch2 << 16
-            | (ulong)ch1;
+        AsSpan<ushort>()[top * Width + left] = (ushort)((ch <= 0xFF ? ch : '?') | (0x7 << 8));
     }
 }

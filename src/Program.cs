@@ -86,7 +86,7 @@ class Program
         sysTable.LoadIdt(Unsafe.AsPointer(ref idt[0]), (ushort)(idt.Length * sizeof(InterruptDescriptor64)));
 
         // Reset counter
-        VgaBuffer.Write(0, 0, '0', '0', '0', '0');
+        VgaBuffer.AsSpan<ulong>()[0] = 0x0730073007300730ul;
 
         // Enable timer
         sysTable.EnableInterrupts();

@@ -365,6 +365,8 @@ namespace System.Runtime.CompilerServices
 
 namespace System.Runtime.InteropServices
 {
+    public enum UnmanagedType { }
+
     public sealed class UnmanagedCallersOnlyAttribute : Attribute
     {
         public Type[]? CallConvs;
